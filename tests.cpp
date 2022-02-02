@@ -3,75 +3,77 @@
 #include <chrono>
 #include <thread>
 
-
-
 using namespace std;
+using namespace chrono;
+using namespace chrono_literals;
 
-TEST(ProfileTime, sleep1000) {
-
-	frd::Profiler p;
-	p.addNewTimer("Sleep(1000) Time");
-	p.startTimer(1);
-	this_thread::sleep_for(chrono::milliseconds(1000));
-	p.addPartialTime(1);
-	p.printTimeSummary();
-	EXPECT_LT(1.0, p.total_time[1].count());
-	EXPECT_LT(p.total_time[1].count(), 1.001);
-	
+void wait(milliseconds t) {
+    auto now = steady_clock::now();
+    while ((steady_clock::now() - now) < t)
+        ;
 }
 
-void innerFunction1() {
-	this_thread::sleep_for(10ms);
+TEST(ProfileTime, wait) {
+    frd::Profiler p;
+    constexpr auto t = 200ms;
+    constexpr auto sleep{"Sleep(t) Time"};
+
+    p.addNewTimer(sleep);
+    p.startTimer(sleep);
+
+    wait(200ms);
+
+    p.addPartialTime(sleep);
+    p.printTimeSummary();
+
+    EXPECT_TRUE(t < p.getTotalTime(sleep));
+    EXPECT_TRUE((t + 1ms) > p.getTotalTime(sleep));
 }
 
-void innerFunction2() {
-	this_thread::sleep_for(25ms);
-}
+TEST(ProfileNested, function_nest) {
+    frd::Profiler p;
+    p.addNewTimer("Outer");
+    p.startTimer("Outer");
+    p.addNewTimer("Midle");
+    p.addNewTimer("Inner1");
+    p.addNewTimer("Inner2");
+    for (int i = 0; i < 5; ++i) {
+        p.startTimer("Midle");
+        for (int j = 0; j < 3; ++j) {
+            p.startTimer("Inner1");
+            wait(10ms);
+            p.addPartialTime("Inner1");
 
-TEST(ProfileNested, Total1000ms) {
-	
-	frd::secondsDouble total;
+            p.startTimer("Inner2");  // Inner2
+            wait(25ms);
+            p.addPartialTime("Inner2");  // Inner2
+        }
+        p.addPartialTime("Midle");  // Middle
+    }
+    wait(100ms);
+    p.addPartialTime("Outer");  // Outer
 
-	frd::Profiler p;
-	p.addNewTimer("Outer");
-	p.startTimer(1);
-	p.addNewTimer("Midle");
-	p.addNewTimer("Inner1");
-	p.addNewTimer("Inner2");
-	for (int i = 0; i < 5; ++i) {
-		p.startTimer(2); // Midle
-		for (int j = 0; j < 10; ++j) {			
-			p.startTimer(3); //Inner1
-			auto start = std::chrono::steady_clock::now();
-			innerFunction1();
-			p.addPartialTime(3); //Inner1
-			total += std::chrono::steady_clock::now() - start;
-			p.startTimer(4); //Inner2
-			innerFunction2();
-			p.addPartialTime(4); //Inner2
-			this_thread::sleep_for(5ms);
-		}
-		p.addPartialTime(2); // Middle
-		this_thread::sleep_for(50ms);
-	}
-	this_thread::sleep_for(100ms);
-	p.addPartialTime(1); // Outer
-	p.printTimeSummary();
+    wait(50ms);
 
-	cout << total.count();
+    p.printTimeSummary();
 
-	EXPECT_LT(2.35, p.total_time[0].count());
-	EXPECT_LT(p.total_time[0].count(), 2.35 + 0.1);		// up to 1ms error per sleep
+    auto inner1 = 5 * 3 * (10ms);
+    EXPECT_TRUE(inner1 < p.getTotalTime("Inner1"));
+    EXPECT_TRUE((inner1 + 1ms) > p.getTotalTime("Inner1"));
 
-	EXPECT_LT(2.25, p.total_time[1].count());
-	EXPECT_LT(p.total_time[1].count(), 2.35 + 0.1);		// up to 1ms error per sleep
+    auto inner2 = 5 * 3 * (25ms);
+    EXPECT_TRUE(inner2 < p.getTotalTime("Inner2"));
+    EXPECT_TRUE((inner2 + 1ms) > p.getTotalTime("Inner2"));
 
-	EXPECT_LT(2.0, p.total_time[2].count());
-	EXPECT_LT(p.total_time[2].count(), 2.0 + 0.1);		// up to 1ms error per sleep
+    auto middle = inner1 + inner2;
+    EXPECT_TRUE(middle < p.getTotalTime("Midle"));
+    EXPECT_TRUE((middle + 1ms) > p.getTotalTime("Midle"));
 
-	EXPECT_LT(0.5, p.total_time[3].count());
-	EXPECT_LT(p.total_time[3].count(), 0.5 + 0.1);		// up to 1ms error per iteration
+    auto outer = middle + 100ms;
+    EXPECT_TRUE(outer < p.getTotalTime("Outer"));
+    EXPECT_TRUE((outer + 1ms) > p.getTotalTime("Outer"));
 
-	EXPECT_LT(1.25, p.total_time[4].count());
-	EXPECT_LT(p.total_time[4].count(), 1.25 + (0.001 * 50));		// up to 1ms error per iteration
+    auto total = outer + 50ms;
+    EXPECT_TRUE(total < p.getTotalTime("_Total"));
+    EXPECT_TRUE((total + 1ms) > p.getTotalTime("_Total"));
 }
